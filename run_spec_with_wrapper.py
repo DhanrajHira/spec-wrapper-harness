@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 PLACEHOLDER_RE = re.compile(r"\{([A-Za-z0-9_-]+)\}")
 
 COMMAND_PLACEHOLDERS = {
@@ -108,15 +107,23 @@ def parse_args() -> argparse.Namespace:
         default=1,
         help="parallel benchmark groups; use -1 for maximum allowed parallelism",
     )
-    parser.add_argument("--suite", action="append", help="suite filter; may be repeated")
-    parser.add_argument("--benchmark", action="append", help="benchmark filter; may be repeated")
-    parser.add_argument("--dry-run", action="store_true", help="print commands without running them")
+    parser.add_argument(
+        "--suite", action="append", help="suite filter; may be repeated"
+    )
+    parser.add_argument(
+        "--benchmark", action="append", help="benchmark filter; may be repeated"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="print commands without running them"
+    )
     parser.add_argument(
         "--continue-on-error",
         action="store_true",
         help="continue scheduling after command failures",
     )
-    parser.add_argument("--verbose", action="store_true", help="print shell commands before execution")
+    parser.add_argument(
+        "--verbose", action="store_true", help="print shell commands before execution"
+    )
     parser.add_argument(
         "wrapper",
         nargs=argparse.REMAINDER,
@@ -152,9 +159,13 @@ def load_commands(commands_file: Path) -> list[dict[str, Any]]:
     try:
         data = json.loads(commands_file.read_text())
     except OSError as exc:
-        raise RunnerError(f"failed to read commands file {commands_file}: {exc}") from exc
+        raise RunnerError(
+            f"failed to read commands file {commands_file}: {exc}"
+        ) from exc
     except json.JSONDecodeError as exc:
-        raise RunnerError(f"failed to parse commands file {commands_file}: {exc}") from exc
+        raise RunnerError(
+            f"failed to parse commands file {commands_file}: {exc}"
+        ) from exc
 
     commands = data.get("commands")
     if not isinstance(commands, list):
@@ -165,10 +176,14 @@ def load_commands(commands_file: Path) -> list[dict[str, Any]]:
 def resolve_commands_file(commands_file: str | None) -> Path:
     if commands_file:
         return Path(commands_file).expanduser().resolve(strict=False)
-    return Path(__file__).with_name("spec_integer_run_commands.json").resolve(strict=False)
+    return (
+        Path(__file__).with_name("spec_integer_run_commands.json").resolve(strict=False)
+    )
 
 
-def filter_commands(commands: list[dict[str, Any]], args: argparse.Namespace) -> list[dict[str, Any]]:
+def filter_commands(
+    commands: list[dict[str, Any]], args: argparse.Namespace
+) -> list[dict[str, Any]]:
     suites = set(args.suite or [])
     benchmarks = set(args.benchmark or [])
     filtered = []
@@ -247,7 +262,9 @@ def build_shell_command(
 ) -> RenderedCommand:
     argv = command.get("argv")
     if not isinstance(argv, list) or not argv:
-        raise RunnerError(f"command {manifest_index} must contain a non-empty argv list")
+        raise RunnerError(
+            f"command {manifest_index} must contain a non-empty argv list"
+        )
 
     raw_cwd = command.get("cwd")
     if not isinstance(raw_cwd, str):
@@ -266,7 +283,9 @@ def build_shell_command(
 
     redirect_shell = render_redirects(resolved_redirects)
     benchmark_argv_shell = quote_argv(resolved_argv)
-    benchmark_cmd = " ".join(part for part in (benchmark_argv_shell, redirect_shell) if part)
+    benchmark_cmd = " ".join(
+        part for part in (benchmark_argv_shell, redirect_shell) if part
+    )
 
     suite = str(command.get("suite", ""))
     benchmark = str(command.get("benchmark", ""))
@@ -295,7 +314,9 @@ def build_shell_command(
 
     wrapper_parts = [
         rendered
-        for rendered in (render_wrapper_token(token, scalars, snippets) for token in wrapper)
+        for rendered in (
+            render_wrapper_token(token, scalars, snippets) for token in wrapper
+        )
         if rendered
     ]
     if not wrapper_parts:
@@ -323,10 +344,16 @@ def render_wrapper_token(
     if exact and exact.group(1) in snippets:
         return snippets[exact.group(1)]
 
-    embedded_command_placeholders = COMMAND_PLACEHOLDERS & set(PLACEHOLDER_RE.findall(token))
+    embedded_command_placeholders = COMMAND_PLACEHOLDERS & set(
+        PLACEHOLDER_RE.findall(token)
+    )
     if embedded_command_placeholders:
-        formatted = ", ".join(f"{{{name}}}" for name in sorted(embedded_command_placeholders))
-        raise RunnerError(f"command placeholder(s) must be standalone wrapper arguments: {formatted}")
+        formatted = ", ".join(
+            f"{{{name}}}" for name in sorted(embedded_command_placeholders)
+        )
+        raise RunnerError(
+            f"command placeholder(s) must be standalone wrapper arguments: {formatted}"
+        )
 
     def replace(match: re.Match[str]) -> str:
         name = match.group(1)
@@ -334,7 +361,9 @@ def render_wrapper_token(
             raise RunnerError(f"unknown placeholder: {{{name}}}")
         value = scalars[name]
         if value is None:
-            raise RunnerError(f"placeholder {{{name}}} is not available for this command")
+            raise RunnerError(
+                f"placeholder {{{name}}} is not available for this command"
+            )
         return value
 
     return shlex.quote(PLACEHOLDER_RE.sub(replace, token))
@@ -358,7 +387,9 @@ def print_dry_run(rendered_commands: list[RenderedCommand]) -> int:
     return 0
 
 
-def group_commands(rendered_commands: list[RenderedCommand]) -> deque[list[RenderedCommand]]:
+def group_commands(
+    rendered_commands: list[RenderedCommand],
+) -> deque[list[RenderedCommand]]:
     groups: OrderedDict[tuple[str, str], list[RenderedCommand]] = OrderedDict()
     for command in rendered_commands:
         groups.setdefault(command.group_key, []).append(command)
