@@ -43,6 +43,11 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
+        "--install-root",
+        default="../",
+        help="SPEC install root; relative paths are resolved from the current directory",
+    )
+    parser.add_argument(
         "--config", required=True, help="SPEC config name/path to pass to runcpu"
     )
     parser.add_argument(
@@ -71,12 +76,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output",
-        default="run_command_capture/spec_integer_run_commands.json",
+        default="spec_run_commands.json",
         help="output JSON path",
     )
     parser.add_argument(
         "--log-dir",
-        default="run_command_capture",
+        default=".",
         help="directory for captured fake-run logs",
     )
     parser.add_argument(
@@ -132,8 +137,18 @@ def suite_config(args: argparse.Namespace, suite: str) -> str:
     return args.suite_config.get(suite, args.config)
 
 
-def install_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+def resolve_install_root(value: str) -> Path:
+    root = resolve_cli_path(value)
+    if not (root / "bin" / "runcpu").is_file():
+        raise GeneratorError(f"install root does not contain bin/runcpu: {root}")
+    return root
+
+
+def resolve_cli_path(value: str) -> Path:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return path.resolve(strict=False)
 
 
 def root_relative(path: str | Path, root: Path) -> str:
@@ -220,7 +235,7 @@ def run_runcpu(command: list[str], root: Path, log_path: Path | None = None) -> 
 
 def generate_logs(args: argparse.Namespace, root: Path) -> dict[str, Path]:
     logs: dict[str, Path] = {}
-    log_dir = (root / args.log_dir).resolve(strict=False)
+    log_dir = resolve_cli_path(args.log_dir)
 
     for suite in args.suite:
         config = suite_config(args, suite)
@@ -234,10 +249,7 @@ def generate_logs(args: argparse.Namespace, root: Path) -> dict[str, Path]:
                 run_runcpu(setup_command(config, suite, args), root)
 
             if existing_log:
-                existing_path = Path(existing_log).expanduser()
-                if not existing_path.is_absolute():
-                    existing_path = root / existing_path
-                logs[suite] = existing_path.resolve(strict=False)
+                logs[suite] = resolve_cli_path(existing_log)
             else:
                 log_path = log_dir / f"{suite}_fake_run.log"
                 run_runcpu(
@@ -454,11 +466,7 @@ def write_manifest(args: argparse.Namespace, root: Path, logs: dict[str, Path]) 
         "commands": commands,
     }
 
-    output = (
-        (root / args.output).resolve(strict=False)
-        if not os.path.isabs(args.output)
-        else Path(args.output)
-    )
+    output = resolve_cli_path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(manifest, indent=2) + "\n")
     print(f"wrote {output} ({len(commands)} commands)", file=sys.stderr)
@@ -467,7 +475,7 @@ def write_manifest(args: argparse.Namespace, root: Path, logs: dict[str, Path]) 
 def main() -> int:
     try:
         args = parse_args()
-        root = install_root()
+        root = resolve_install_root(args.install_root)
         logs = generate_logs(args, root)
         write_manifest(args, root, logs)
         return 0
