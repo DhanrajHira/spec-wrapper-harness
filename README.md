@@ -17,13 +17,14 @@ Generate a config-specific command file, building binaries and setting up run di
 
 The generator defaults to `--install-root ../`, which is convenient when run from this command-capture directory. Pass `--install-root /path/to/spec-install` if you run it from somewhere else.
 
-Run the generated commands through a wrapper such as Intel Pin:
+Run the generated commands through a wrapper such as Intel Pin, using conservative per-benchmark scheduling:
 
 ```bash
 ./run_spec_with_wrapper.py \
   --install-root ../ \
   --commands-file spec_run_commands.json \
   --jobs -1 \
+  --serialize-benchmark-commands \
   -- /path/to/pin -t /path/to/custom-tool -- {benchmark_cmd}
 ```
 
@@ -92,7 +93,7 @@ Consumers should resolve `cwd`, file-like `argv` entries, and redirect target va
 
 The `commands` array is ordered exactly as the SPEC harness emitted the benchmark invocations. Consumers should execute entries in this order unless they deliberately implement SPEC-compatible scheduling.
 
-Some benchmarks have multiple inputs or dependent stages. Entries for the same `benchmark` must run sequentially by ascending `command_index`; do not parallelize commands within a single benchmark.
+Some benchmarks have multiple inputs or dependent stages. Most multi-command benchmarks use independent inputs, but some commands depend on files created by earlier commands. The known command-order-sensitive cases are `525.x264_r` and `625.x264_s`, where later stages depend on files produced by earlier stages.
 
 Examples of multi-command benchmarks include:
 
@@ -121,14 +122,15 @@ The `command` field can be used directly by a shell from the install root if pre
 
 `run_spec_with_wrapper.py` runs the captured benchmark commands through a user-provided wrapper command. It resolves install-root-relative paths to absolute paths, reconstructs each benchmark command from `argv` plus `redirects`, and executes each wrapper invocation in a subshell rooted at the captured benchmark working directory.
 
-Example Intel Pin-style usage:
+Example conservative Intel Pin-style usage:
 
 ```bash
 ./run_spec_with_wrapper.py \
   --install-root /path/to/spec-install \
   --commands-file spec_run_commands.json \
   --jobs 8 \
-  -- /path/to/pin -t /path/to/custom-tool {benchmark_cmd}
+  --serialize-benchmark-commands \
+  -- /path/to/pin -t /path/to/custom-tool -- {benchmark_cmd}
 ```
 
 `--commands-file` is optional. If omitted, it defaults to `spec_integer_run_commands.json` next to `run_spec_with_wrapper.py`.
@@ -166,7 +168,9 @@ Scalar placeholders are:
 
 Command placeholders must be standalone wrapper arguments because they expand to shell command fragments. Scalar placeholders may be embedded inside larger wrapper arguments, such as `--name={benchmark_name}`.
 
-`--jobs N` runs benchmark groups in parallel. `--jobs -1` uses the maximum allowed parallelism, which is one worker per benchmark group after filtering. Commands for the same `(suite, benchmark)` pair are always kept sequential and in manifest order.
+`--jobs N` runs rendered commands in parallel. The default is `--jobs 1`, so commands run in manifest order unless parallelism is requested. `--jobs -1` uses one worker per rendered command after filtering.
+
+By default, commands for the same `(suite, benchmark)` pair are not grouped. With `--jobs > 1`, command indices from one benchmark may run concurrently. Use `--serialize-benchmark-commands` for conservative scheduling: each `(suite, benchmark)` pair becomes one work item, and its commands run sequentially in manifest order. With that flag, `--jobs -1` uses one worker per benchmark group.
 
 The runner does not run `setup_required` commands. Run those first if the run directories have not already been materialized.
 

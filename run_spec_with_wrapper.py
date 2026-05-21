@@ -105,7 +105,12 @@ def parse_args() -> argparse.Namespace:
         "--jobs",
         type=jobs_count,
         default=1,
-        help="parallel benchmark groups; use -1 for maximum allowed parallelism",
+        help="parallel commands; use -1 for maximum allowed parallelism",
+    )
+    parser.add_argument(
+        "--serialize-benchmark-commands",
+        action="store_true",
+        help="keep commands for the same suite/benchmark sequential",
     )
     parser.add_argument(
         "--suite", action="append", help="suite filter; may be repeated"
@@ -401,9 +406,14 @@ def run_rendered_commands(
     jobs: int,
     continue_on_error: bool,
     verbose: bool,
+    serialize_benchmark_commands: bool,
 ) -> int:
-    groups = group_commands(rendered_commands)
-    max_workers = len(groups) if jobs == -1 else min(jobs, len(groups))
+    work_items = (
+        group_commands(rendered_commands)
+        if serialize_benchmark_commands
+        else deque([command] for command in rendered_commands)
+    )
+    max_workers = len(work_items) if jobs == -1 else min(jobs, len(work_items))
     queue_lock = threading.Lock()
     print_lock = threading.Lock()
     stop_event = threading.Event()
@@ -412,9 +422,9 @@ def run_rendered_commands(
         with queue_lock:
             if stop_event.is_set() and not continue_on_error:
                 return None
-            if not groups:
+            if not work_items:
                 return None
-            return groups.popleft()
+            return work_items.popleft()
 
     def worker() -> list[tuple[RenderedCommand, int]]:
         failures = []
@@ -481,6 +491,7 @@ def main() -> int:
             jobs=args.jobs,
             continue_on_error=args.continue_on_error,
             verbose=args.verbose,
+            serialize_benchmark_commands=args.serialize_benchmark_commands,
         )
     except RunnerError as exc:
         print(f"error: {exc}", file=sys.stderr)
