@@ -178,6 +178,11 @@ The runner does not run `setup_required` commands. Run those first if the run di
 
 `generate_command_file.py` regenerates the concrete command manifest for a specific SPEC config. It runs the selected suites through SPEC clobber, build, setup, and fake run phases, parses the fake benchmark invocations, and writes the same JSON schema consumed by `run_spec_with_wrapper.py`.
 
+Provided configs:
+
+- `gcc-pgo-lto-all.cfg`: static GCC PGO+LTO build with BOLT-friendly relocation and symbol retention.
+- `gcc-pgo-lto-all-nopie.cfg`: same as above, plus compile-time `-fno-pic -fno-pie` and link-time `-no-pie` for more statically resolved binaries.
+
 Example full-suite generation:
 
 ```bash
