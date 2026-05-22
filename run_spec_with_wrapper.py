@@ -252,12 +252,12 @@ def render_redirects(redirects: dict[str, str]) -> str:
 def redirect_placeholder_values(redirects: dict[str, str]) -> dict[str, str | None]:
     return {
         "stdin": redirects.get("stdin"),
-        "stdout": redirects.get("stdout"),
-        "stdout-append": redirects.get("stdout-append"),
-        "stdout_append": redirects.get("stdout-append"),
-        "stderr": redirects.get("stderr"),
-        "stderr-append": redirects.get("stderr-append"),
-        "stderr_append": redirects.get("stderr-append"),
+        "stdout": redirects.get("stdout", "/dev/null"),
+        "stdout-append": redirects.get("stdout-append", "/dev/null"),
+        "stdout_append": redirects.get("stdout-append", "/dev/null"),
+        "stderr": redirects.get("stderr", "/dev/null"),
+        "stderr-append": redirects.get("stderr-append", "/dev/null"),
+        "stderr_append": redirects.get("stderr-append", "/dev/null"),
     }
 
 

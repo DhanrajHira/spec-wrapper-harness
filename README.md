@@ -166,6 +166,8 @@ Scalar placeholders are:
 - `{stderr}`
 - `{stderr_append}` or `{stderr-append}`
 
+Missing output redirect placeholders (`{stdout}`, `{stdout_append}`, `{stdout-append}`, `{stderr}`, `{stderr_append}`, `{stderr-append}`) expand to `/dev/null`. Missing `{stdin}` remains an error.
+
 Command placeholders must be standalone wrapper arguments because they expand to shell command fragments. Scalar placeholders may be embedded inside larger wrapper arguments, such as `--name={benchmark_name}`.
 
 `--jobs N` runs rendered commands in parallel. The default is `--jobs 1`, so commands run in manifest order unless parallelism is requested. `--jobs -1` uses one worker per rendered command after filtering.
