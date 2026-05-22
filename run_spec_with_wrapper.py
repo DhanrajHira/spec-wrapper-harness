@@ -132,7 +132,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "wrapper",
         nargs=argparse.REMAINDER,
-        help="wrapper command after --; include a benchmark command placeholder",
+        help="wrapper command after --; usually includes a benchmark command placeholder",
     )
     args = parser.parse_args()
 
@@ -157,7 +157,10 @@ def validate_wrapper(wrapper: list[str]) -> None:
 
     if not placeholders & RUN_COMMAND_PLACEHOLDERS:
         required = ", ".join(f"{{{name}}}" for name in sorted(RUN_COMMAND_PLACEHOLDERS))
-        raise RunnerError(f"wrapper must include one of: {required}")
+        print(
+            f"warning: wrapper does not include one of: {required}",
+            file=sys.stderr,
+        )
 
 
 def load_commands(commands_file: Path) -> list[dict[str, Any]]:
