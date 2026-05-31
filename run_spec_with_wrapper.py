@@ -193,13 +193,16 @@ def filter_commands(
     commands: list[dict[str, Any]], args: argparse.Namespace
 ) -> list[dict[str, Any]]:
     suites = set(args.suite or [])
-    benchmarks = set(args.benchmark or [])
+    benchmark_filters = [value.casefold() for value in args.benchmark or []]
     filtered = []
 
     for command in commands:
         if suites and command.get("suite") not in suites:
             continue
-        if benchmarks and command.get("benchmark") not in benchmarks:
+        benchmark = str(command.get("benchmark", "")).casefold()
+        if benchmark_filters and not any(
+            value in benchmark for value in benchmark_filters
+        ):
             continue
         filtered.append(command)
 
