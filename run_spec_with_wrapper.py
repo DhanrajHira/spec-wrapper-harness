@@ -121,6 +121,11 @@ def parse_args() -> argparse.Namespace:
         "--benchmark", action="append", help="benchmark filter; may be repeated"
     )
     parser.add_argument(
+        "--skip-benchmark",
+        action="append",
+        help="benchmark exclusion filter; case-insensitive substring match; may be repeated",
+    )
+    parser.add_argument(
         "--dry-run", action="store_true", help="print commands without running them"
     )
     parser.add_argument(
@@ -251,6 +256,9 @@ def filter_commands(
 ) -> list[dict[str, Any]]:
     suites = set(args.suite or [])
     benchmark_filters = [value.casefold() for value in args.benchmark or []]
+    skip_benchmark_filters = [
+        value.casefold() for value in args.skip_benchmark or []
+    ]
     filtered = []
 
     for command in commands:
@@ -259,6 +267,10 @@ def filter_commands(
         benchmark = str(command.get("benchmark", "")).casefold()
         if benchmark_filters and not any(
             value in benchmark for value in benchmark_filters
+        ):
+            continue
+        if skip_benchmark_filters and any(
+            value in benchmark for value in skip_benchmark_filters
         ):
             continue
         filtered.append(command)

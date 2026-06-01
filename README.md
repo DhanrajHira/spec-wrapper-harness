@@ -187,7 +187,7 @@ Example:
 
 By default, commands for the same `(suite, benchmark)` pair are not grouped. With `--jobs > 1`, command indices from one benchmark may run concurrently. Use `--serialize-benchmark-commands` for conservative scheduling: each `(suite, benchmark)` pair becomes one work item, and its commands run sequentially in manifest order. With that flag, `--jobs -1` uses one worker per benchmark group.
 
-`--benchmark` filters use case-insensitive substring matching against the full benchmark name. For example, both `--benchmark x264` and `--benchmark 525` match `525.x264_r`.
+`--benchmark` filters use case-insensitive substring matching against the full benchmark name. For example, both `--benchmark x264` and `--benchmark 525` match `525.x264_r`. `--skip-benchmark` uses the same matching rules to exclude benchmarks after the include filter is applied.
 
 The runner does not run `setup_required` commands. Run those first if the run directories have not already been materialized.
 
