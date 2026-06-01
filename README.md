@@ -120,7 +120,7 @@ The `command` field can be used directly by a shell from the install root if pre
 
 ## Wrapper Runner
 
-`run_spec_with_wrapper.py` runs the captured benchmark commands through a user-provided wrapper command. It resolves install-root-relative paths to absolute paths, reconstructs each benchmark command from `argv` plus `redirects`, and executes each wrapper invocation in a subshell rooted at the captured benchmark working directory.
+`run_spec_with_wrapper.py` runs the captured benchmark commands through a user-provided wrapper command. It resolves the benchmark executable and redirect targets to absolute paths, reconstructs each benchmark command from `argv` plus `redirects`, and executes each wrapper invocation in a subshell rooted at the captured benchmark working directory. Non-executable argv paths that point inside the captured working directory are rendered relative to that directory to preserve benchmarks that treat an argument as a name or input stem.
 
 Example conservative Intel Pin-style usage:
 
@@ -173,6 +173,8 @@ Command placeholders must be standalone wrapper arguments because they expand to
 `--jobs N` runs rendered commands in parallel. The default is `--jobs 1`, so commands run in manifest order unless parallelism is requested. `--jobs -1` uses one worker per rendered command after filtering.
 
 By default, commands for the same `(suite, benchmark)` pair are not grouped. With `--jobs > 1`, command indices from one benchmark may run concurrently. Use `--serialize-benchmark-commands` for conservative scheduling: each `(suite, benchmark)` pair becomes one work item, and its commands run sequentially in manifest order. With that flag, `--jobs -1` uses one worker per benchmark group.
+
+`--benchmark` filters use case-insensitive substring matching against the full benchmark name. For example, both `--benchmark x264` and `--benchmark 525` match `525.x264_r`.
 
 The runner does not run `setup_required` commands. Run those first if the run directories have not already been materialized.
 

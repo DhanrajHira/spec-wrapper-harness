@@ -219,16 +219,34 @@ def resolve_install_path(value: str, install_root: Path) -> str:
     return value
 
 
-def resolve_argv_value(value: str, install_root: Path) -> str:
+def cwd_relative_if_inside(path: Path, cwd: Path) -> str:
+    resolved_path = path.resolve(strict=False)
+    resolved_cwd = cwd.resolve(strict=False)
+    try:
+        relative = resolved_path.relative_to(resolved_cwd)
+    except ValueError:
+        return str(resolved_path)
+    return relative.as_posix() or "."
+
+
+def resolve_argv_path(value: str, install_root: Path, cwd: Path) -> str:
+    if value.startswith("./"):
+        return cwd_relative_if_inside(install_root / value[2:], cwd)
+    if os.path.isabs(value):
+        return cwd_relative_if_inside(Path(value), cwd)
+    return value
+
+
+def resolve_argv_value(value: str, install_root: Path, cwd: Path) -> str:
     if value.startswith("-I./"):
-        return "-I" + resolve_install_path(value[2:], install_root)
+        return "-I" + resolve_argv_path(value[2:], install_root, cwd)
     if value.startswith("-L./"):
-        return "-L" + resolve_install_path(value[2:], install_root)
+        return "-L" + resolve_argv_path(value[2:], install_root, cwd)
     if "=" in value:
         prefix, suffix = value.split("=", 1)
         if suffix.startswith("./"):
-            return prefix + "=" + resolve_install_path(suffix, install_root)
-    return resolve_install_path(value, install_root)
+            return prefix + "=" + resolve_argv_path(suffix, install_root, cwd)
+    return resolve_argv_path(value, install_root, cwd)
 
 
 def quote_argv(argv: list[str]) -> str:
@@ -286,7 +304,11 @@ def build_shell_command(
         raise RunnerError(f"command {manifest_index} redirects must be an object")
 
     resolved_cwd = resolve_install_path(raw_cwd, install_root)
-    resolved_argv = [resolve_argv_value(str(arg), install_root) for arg in argv]
+    resolved_cwd_path = Path(resolved_cwd)
+    resolved_argv = [resolve_install_path(str(argv[0]), install_root)] + [
+        resolve_argv_value(str(arg), install_root, resolved_cwd_path)
+        for arg in argv[1:]
+    ]
     resolved_redirects = {
         key: resolve_install_path(str(target), install_root)
         for key, target in raw_redirects.items()

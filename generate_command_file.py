@@ -417,7 +417,7 @@ def should_normalize_value(token: str, cwd: Path) -> bool:
         return True
     if "/" in token or "." in token:
         return True
-    return (cwd / token).exists()
+    return False
 
 
 def normalize_path(token: str, cwd: Path, root: Path) -> str:
