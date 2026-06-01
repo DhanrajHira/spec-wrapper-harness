@@ -156,6 +156,7 @@ Scalar placeholders are:
 - `{benchmark}`
 - `{benchmark_name}`
 - `{phase}`
+- `{command_idx}`
 - `{command_index}`
 - `{cwd}`
 - `{benchmark_cwd}`
@@ -169,6 +170,18 @@ Scalar placeholders are:
 Missing output redirect placeholders (`{stdout}`, `{stdout_append}`, `{stdout-append}`, `{stderr}`, `{stderr_append}`, `{stderr-append}`) expand to `/dev/null`. Missing `{stdin}` remains an error.
 
 Command placeholders must be standalone wrapper arguments because they expand to shell command fragments. Scalar placeholders may be embedded inside larger wrapper arguments, such as `--name={benchmark_name}`.
+
+Use `--placeholder NAME COMMAND` to define a custom scalar placeholder. The runner renders built-in scalar placeholders in `COMMAND`, runs it once per benchmark command from `--install-root`, captures stdout with trailing newlines removed, and exposes the result as `{NAME}` in the wrapper. The command is evaluated even for `--dry-run` so the printed wrapper command is fully rendered.
+
+Example:
+
+```bash
+./run_spec_with_wrapper.py \
+  --install-root /path/to/spec-install \
+  --commands-file spec_run_commands.json \
+  --placeholder simpoints_file 'python3 /path/to/get_simpoints_path.py {benchmark_name} {command_index}' \
+  -- /path/to/pin -t /path/to/custom-tool -simpoint_file {simpoints_file} -- {benchmark_cmd}
+```
 
 `--jobs N` runs rendered commands in parallel. The default is `--jobs 1`, so commands run in manifest order unless parallelism is requested. `--jobs -1` uses one worker per rendered command after filtering.
 

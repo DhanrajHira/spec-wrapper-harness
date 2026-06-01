@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 PLACEHOLDER_RE = re.compile(r"\{([A-Za-z0-9_-]+)\}")
+PLACEHOLDER_NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 COMMAND_PLACEHOLDERS = {
     "benchmark_args",
@@ -37,6 +38,7 @@ SCALAR_PLACEHOLDERS = {
     "benchmark_cwd",
     "benchmark_exe",
     "benchmark_name",
+    "command_idx",
     "command_index",
     "cwd",
     "install_root",
@@ -130,6 +132,14 @@ def parse_args() -> argparse.Namespace:
         "--verbose", action="store_true", help="print shell commands before execution"
     )
     parser.add_argument(
+        "--placeholder",
+        action="append",
+        default=[],
+        nargs=2,
+        metavar=("NAME", "COMMAND"),
+        help="define custom scalar placeholder NAME from stdout of COMMAND; may be repeated",
+    )
+    parser.add_argument(
         "wrapper",
         nargs=argparse.REMAINDER,
         help="wrapper command after --; usually includes a benchmark command placeholder",
@@ -142,16 +152,63 @@ def parse_args() -> argparse.Namespace:
     if not args.wrapper:
         parser.error("wrapper command is required after --")
 
-    validate_wrapper(args.wrapper)
+    args.placeholder = parse_custom_placeholders(args.placeholder)
+    validate_custom_placeholder_templates(args.placeholder)
+    validate_wrapper(args.wrapper, set(args.placeholder))
     return args
 
 
-def validate_wrapper(wrapper: list[str]) -> None:
+def parse_custom_placeholders(
+    specs: list[tuple[str, str]],
+) -> OrderedDict[str, str]:
+    placeholders: OrderedDict[str, str] = OrderedDict()
+    for name, command in specs:
+        if not PLACEHOLDER_NAME_RE.fullmatch(name):
+            raise RunnerError(
+                f"invalid custom placeholder name {name!r}; use letters, digits, '_' or '-'"
+            )
+        if name in KNOWN_PLACEHOLDERS:
+            raise RunnerError(
+                f"custom placeholder {{{name}}} conflicts with a built-in"
+            )
+        if name in placeholders:
+            raise RunnerError(
+                f"custom placeholder {{{name}}} is defined more than once"
+            )
+        if not command.strip():
+            raise RunnerError(f"custom placeholder {{{name}}} command is empty")
+        placeholders[name] = command
+    return placeholders
+
+
+def validate_custom_placeholder_templates(
+    placeholders: OrderedDict[str, str],
+) -> None:
+    available = set(SCALAR_PLACEHOLDERS)
+    for name, command in placeholders.items():
+        used = set(PLACEHOLDER_RE.findall(command))
+        command_placeholders = sorted(used & COMMAND_PLACEHOLDERS)
+        if command_placeholders:
+            formatted = ", ".join(f"{{{item}}}" for item in command_placeholders)
+            raise RunnerError(
+                f"custom placeholder {{{name}}} command cannot use command placeholder(s): {formatted}"
+            )
+
+        unknown = sorted(used - available)
+        if unknown:
+            formatted = ", ".join(f"{{{item}}}" for item in unknown)
+            raise RunnerError(
+                f"custom placeholder {{{name}}} command uses unknown placeholder(s): {formatted}"
+            )
+        available.add(name)
+
+
+def validate_wrapper(wrapper: list[str], custom_placeholders: set[str]) -> None:
     placeholders: set[str] = set()
     for token in wrapper:
         placeholders.update(PLACEHOLDER_RE.findall(token))
 
-    unknown = sorted(placeholders - KNOWN_PLACEHOLDERS)
+    unknown = sorted(placeholders - KNOWN_PLACEHOLDERS - custom_placeholders)
     if unknown:
         raise RunnerError(f"unknown placeholder(s): {', '.join(unknown)}")
 
@@ -282,9 +339,57 @@ def redirect_placeholder_values(redirects: dict[str, str]) -> dict[str, str | No
     }
 
 
+def render_scalar_template(template: str, scalars: dict[str, str | None]) -> str:
+    def replace(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name not in scalars:
+            raise RunnerError(f"unknown placeholder: {{{name}}}")
+        value = scalars[name]
+        if value is None:
+            raise RunnerError(
+                f"placeholder {{{name}}} is not available for this command"
+            )
+        return shlex.quote(value)
+
+    return PLACEHOLDER_RE.sub(replace, template)
+
+
+def evaluate_custom_placeholders(
+    placeholders: OrderedDict[str, str],
+    scalars: dict[str, str | None],
+    install_root: Path,
+    label: str,
+) -> dict[str, str]:
+    values: dict[str, str] = {}
+    available = dict(scalars)
+
+    for name, template in placeholders.items():
+        rendered = render_scalar_template(template, available)
+        completed = subprocess.run(
+            rendered,
+            cwd=install_root,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if completed.returncode != 0:
+            detail = completed.stderr.rstrip() or rendered
+            raise RunnerError(
+                f"custom placeholder {{{name}}} failed for {label} "
+                f"with exit code {completed.returncode}: {detail}"
+            )
+        value = completed.stdout.rstrip("\n")
+        values[name] = value
+        available[name] = value
+
+    return values
+
+
 def build_shell_command(
     command: dict[str, Any],
     wrapper: list[str],
+    custom_placeholders: OrderedDict[str, str],
     install_root: Path,
     manifest_index: int,
     total_commands: int,
@@ -330,6 +435,7 @@ def build_shell_command(
         "benchmark_cwd": resolved_cwd,
         "benchmark_exe": resolved_argv[0],
         "benchmark_name": benchmark,
+        "command_idx": str(command_index),
         "command_index": str(command_index),
         "cwd": resolved_cwd,
         "install_root": str(install_root),
@@ -337,6 +443,15 @@ def build_shell_command(
         "suite": suite,
     }
     scalars.update(redirect_placeholder_values(resolved_redirects))
+
+    scalars.update(
+        evaluate_custom_placeholders(
+            custom_placeholders,
+            scalars,
+            install_root,
+            f"{suite} {benchmark} command {command_index}",
+        )
+    )
 
     snippets = {
         "benchmark_args": quote_argv(resolved_argv[1:]),
@@ -405,11 +520,19 @@ def render_wrapper_token(
 def render_commands(
     commands: list[dict[str, Any]],
     wrapper: list[str],
+    custom_placeholders: OrderedDict[str, str],
     install_root: Path,
 ) -> list[RenderedCommand]:
     total_commands = len(commands)
     return [
-        build_shell_command(command, wrapper, install_root, index, total_commands)
+        build_shell_command(
+            command,
+            wrapper,
+            custom_placeholders,
+            install_root,
+            index,
+            total_commands,
+        )
         for index, command in enumerate(commands, start=1)
     ]
 
@@ -509,7 +632,12 @@ def main() -> int:
 
         commands_file = resolve_commands_file(args.commands_file)
         commands = filter_commands(load_commands(commands_file), args)
-        rendered_commands = render_commands(commands, args.wrapper, install_root)
+        rendered_commands = render_commands(
+            commands,
+            args.wrapper,
+            args.placeholder,
+            install_root,
+        )
 
         if args.dry_run:
             return print_dry_run(rendered_commands)
