@@ -10,6 +10,7 @@ OUT_DIR=./
      --max-k 10 \
      --bench {benchmark_name}-{command_index} \
      --output-dir $OUT_DIR \
+     --stdin {stdin} \
      --stdout {stdout} \
      --stderr-append {stderr-append} \
      -- {benchmark_argv}
