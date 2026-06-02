@@ -12,6 +12,7 @@ import shlex
 import subprocess
 import sys
 import threading
+import time
 from collections import OrderedDict, deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -609,7 +610,9 @@ def run_rendered_commands(
                     if verbose:
                         print(command.shell_command, file=sys.stderr, flush=True)
 
+                started = time.monotonic()
                 completed = subprocess.run(command.shell_command, shell=True)
+                elapsed = time.monotonic() - started
                 if completed.returncode != 0:
                     failures.append((command, completed.returncode))
                     with print_lock:
@@ -621,6 +624,13 @@ def run_rendered_commands(
                     if not continue_on_error:
                         stop_event.set()
                         break
+                else:
+                    with print_lock:
+                        print(
+                            f"completed [0]: {command.label} ({elapsed:.1f}s)",
+                            file=sys.stderr,
+                            flush=True,
+                        )
 
     failures: list[tuple[RenderedCommand, int]] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
