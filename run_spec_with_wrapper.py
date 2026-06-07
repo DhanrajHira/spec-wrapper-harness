@@ -233,7 +233,7 @@ def resolve_commands_file(commands_file: str | None) -> Path:
 
 def redirect_placeholder_values(redirects: dict[str, str]) -> dict[str, str | None]:
     return {
-        "stdin": redirects.get("stdin"),
+        "stdin": redirects.get("stdin", "/dev/null"),
         "stdout": redirects.get("stdout", "/dev/null"),
         "stdout-append": redirects.get("stdout-append", "/dev/null"),
         "stdout_append": redirects.get("stdout-append", "/dev/null"),

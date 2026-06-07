@@ -171,7 +171,7 @@ Scalar placeholders are:
 - `{stderr}`
 - `{stderr_append}` or `{stderr-append}`
 
-Missing output redirect placeholders (`{stdout}`, `{stdout_append}`, `{stdout-append}`, `{stderr}`, `{stderr_append}`, `{stderr-append}`) expand to `/dev/null`. Missing `{stdin}` remains an error.
+Missing redirect placeholders (`{stdin}`, `{stdout}`, `{stdout_append}`, `{stdout-append}`, `{stderr}`, `{stderr_append}`, `{stderr-append}`) expand to `/dev/null`.
 
 Command placeholders must be standalone wrapper arguments because they expand to shell command fragments. Scalar placeholders may be embedded inside larger wrapper arguments, such as `--name={benchmark_name}`.
 
