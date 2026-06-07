@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import json
-import os
 import shlex
 import subprocess
 import sys
@@ -13,18 +11,17 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-
-class VerifyError(Exception):
-    """A user-facing verification error."""
-
-
-REDIRECT_SHELL_OPS = {
-    "stdin": "<",
-    "stdout": ">",
-    "stdout-append": ">>",
-    "stderr": "2>",
-    "stderr-append": "2>>",
-}
+from spec_commands import (
+    UserError as VerifyError,
+    filter_commands,
+    load_manifest,
+    quote_argv,
+    render_redirects,
+    resolve_cli_path,
+    resolve_command,
+    resolve_install_path,
+    run_cli,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -63,148 +60,14 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def resolve_cli_path(value: str) -> Path:
-    path = Path(value).expanduser()
-    if not path.is_absolute():
-        path = Path.cwd() / path
-    return path.resolve(strict=False)
-
-
-def load_manifest(commands_file: Path) -> dict[str, Any]:
-    try:
-        data = json.loads(commands_file.read_text())
-    except OSError as exc:
-        raise VerifyError(
-            f"failed to read commands file {commands_file}: {exc}"
-        ) from exc
-    except json.JSONDecodeError as exc:
-        raise VerifyError(
-            f"failed to parse commands file {commands_file}: {exc}"
-        ) from exc
-
-    if not isinstance(data, dict):
-        raise VerifyError("commands file must contain a top-level object")
-    commands = data.get("commands")
-    if not isinstance(commands, list):
-        raise VerifyError("commands file must contain a top-level 'commands' list")
-    return data
-
-
-def filter_entries(
-    entries: list[dict[str, Any]], args: argparse.Namespace
-) -> list[dict[str, Any]]:
-    suites = set(args.suite or [])
-    benchmark_filters = [value.casefold() for value in args.benchmark or []]
-    skip_benchmark_filters = [value.casefold() for value in args.skip_benchmark or []]
-    filtered = []
-
-    for command in entries:
-        if suites and command.get("suite") not in suites:
-            continue
-        benchmark = str(command.get("benchmark", ""))
-        benchmark_folded = benchmark.casefold()
-        if benchmark_filters and not any(
-            value in benchmark_folded for value in benchmark_filters
-        ):
-            continue
-        if skip_benchmark_filters and any(
-            value in benchmark_folded for value in skip_benchmark_filters
-        ):
-            continue
-        filtered.append(command)
-
-    if not filtered:
-        raise VerifyError("no commands matched the requested filters")
-    return filtered
-
-
-def resolve_install_path(value: str, install_root: Path) -> Path:
-    if value.startswith("./"):
-        return (install_root / value[2:]).resolve(strict=False)
-    if os.path.isabs(value):
-        return Path(value)
-    return (install_root / value).resolve(strict=False)
-
-
-def cwd_relative_if_inside(path: Path, cwd: Path) -> str:
-    resolved_path = path.resolve(strict=False)
-    resolved_cwd = cwd.resolve(strict=False)
-    try:
-        relative = resolved_path.relative_to(resolved_cwd)
-    except ValueError:
-        return str(resolved_path)
-    return relative.as_posix() or "."
-
-
-def resolve_argv_path(value: str, install_root: Path, cwd: Path) -> str:
-    if value.startswith("./"):
-        return cwd_relative_if_inside(install_root / value[2:], cwd)
-    if os.path.isabs(value):
-        return cwd_relative_if_inside(Path(value), cwd)
-    return value
-
-
-def resolve_argv_value(value: str, install_root: Path, cwd: Path) -> str:
-    if value.startswith("-I./"):
-        return "-I" + resolve_argv_path(value[2:], install_root, cwd)
-    if value.startswith("-L./"):
-        return "-L" + resolve_argv_path(value[2:], install_root, cwd)
-    if "=" in value:
-        prefix, suffix = value.split("=", 1)
-        if suffix.startswith("./"):
-            return prefix + "=" + resolve_argv_path(suffix, install_root, cwd)
-    return resolve_argv_path(value, install_root, cwd)
-
-
-def quote_argv(argv: list[str]) -> str:
-    return " ".join(shlex.quote(arg) for arg in argv)
-
-
-def render_redirects(redirects: dict[str, str]) -> str:
-    unknown = sorted(set(redirects) - set(REDIRECT_SHELL_OPS))
-    if unknown:
-        raise VerifyError(f"unknown redirect key(s): {', '.join(unknown)}")
-    if "stdout" in redirects and "stdout-append" in redirects:
-        raise VerifyError("redirects cannot contain both stdout and stdout-append")
-    if "stderr" in redirects and "stderr-append" in redirects:
-        raise VerifyError("redirects cannot contain both stderr and stderr-append")
-
-    parts = []
-    for key in ("stdin", "stdout", "stdout-append", "stderr", "stderr-append"):
-        target = redirects.get(key)
-        if target is not None:
-            parts.append(f"{REDIRECT_SHELL_OPS[key]} {shlex.quote(target)}")
-    return " ".join(parts)
-
-
 def build_shell_command(entry: dict[str, Any], install_root: Path) -> str:
-    argv = entry.get("argv")
-    if not isinstance(argv, list) or not argv:
-        raise VerifyError("verify command must contain a non-empty argv list")
-
-    raw_cwd = entry.get("cwd")
-    if not isinstance(raw_cwd, str):
-        raise VerifyError("verify command must contain a cwd string")
-
-    raw_redirects = entry.get("redirects", {})
-    if not isinstance(raw_redirects, dict):
-        raise VerifyError("verify command redirects must be an object")
-
-    resolved_cwd = resolve_install_path(raw_cwd, install_root)
-    resolved_argv = [str(resolve_install_path(str(argv[0]), install_root))] + [
-        resolve_argv_value(str(arg), install_root, resolved_cwd) for arg in argv[1:]
-    ]
-    resolved_redirects = {
-        key: str(resolve_install_path(str(target), install_root))
-        for key, target in raw_redirects.items()
-    }
-
+    resolved = resolve_command(entry, install_root, "verify command")
     command = " ".join(
         part
-        for part in (quote_argv(resolved_argv), render_redirects(resolved_redirects))
+        for part in (quote_argv(resolved.argv), render_redirects(resolved.redirects))
         if part
     )
-    return f"( cd {shlex.quote(str(resolved_cwd))} && {command} )"
+    return f"( cd {shlex.quote(resolved.cwd)} && {command} )"
 
 
 def entry_label(entry: dict[str, Any]) -> str:
@@ -223,7 +86,7 @@ def run_directories(
         if not isinstance(cwd, str):
             raise VerifyError("each command must contain a cwd string")
         label = f"{command.get('suite', '')} {command.get('benchmark', '')}"
-        directories.setdefault(resolve_install_path(cwd, install_root), label)
+        directories.setdefault(Path(resolve_install_path(cwd, install_root)), label)
     return directories
 
 
@@ -309,26 +172,26 @@ def verify_entries(
 
 
 def main() -> int:
-    try:
-        args = parse_args()
-        install_root = resolve_cli_path(args.install_root)
-        commands_file = resolve_cli_path(args.commands_file)
-        manifest = load_manifest(commands_file)
-        verify_commands = manifest.get("verify_commands")
-        if isinstance(verify_commands, list) and verify_commands:
-            return verify_entries(
-                filter_entries(verify_commands, args), install_root, args.dry_run
-            )
+    args = parse_args()
+    install_root = resolve_cli_path(args.install_root)
+    commands_file = resolve_cli_path(args.commands_file)
+    manifest = load_manifest(commands_file)
 
-        commands = filter_entries(manifest["commands"], args)
-        return verify_run_dirs(run_directories(commands, install_root), args.dry_run)
-    except VerifyError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
-    except KeyboardInterrupt:
-        print("interrupted", file=sys.stderr)
-        return 130
+    def selected(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return filter_commands(
+            entries,
+            suites=args.suite,
+            include=args.benchmark,
+            exclude=args.skip_benchmark,
+        )
+
+    verify_commands = manifest.get("verify_commands")
+    if isinstance(verify_commands, list) and verify_commands:
+        return verify_entries(selected(verify_commands), install_root, args.dry_run)
+
+    commands = selected(manifest["commands"])
+    return verify_run_dirs(run_directories(commands, install_root), args.dry_run)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run_cli(main))

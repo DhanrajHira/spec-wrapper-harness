@@ -13,28 +13,23 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from spec_commands import (
+    REDIRECT_KEYS,
+    REDIRECT_OPERATORS,
+    REDIRECT_ORDER,
+    REDIRECT_SHELL_OPS,
+    UserError as GeneratorError,
+    resolve_cli_path,
+    run_cli,
+)
+
 DEFAULT_SUITES = ("intspeed", "intrate", "fpspeed", "fprate")
 RUNNING_RE = re.compile(r"^\s+Running\s+(\S+)\s+")
-REDIRECT_KEYS = {
-    "<": "stdin",
-    "0<": "stdin",
-    ">": "stdout",
-    "1>": "stdout",
-    ">>": "stdout-append",
-    "1>>": "stdout-append",
-    "2>": "stderr",
-    "2>>": "stderr-append",
-}
-REDIRECT_OPERATORS = set(REDIRECT_KEYS)
 FILE_VALUE_OPTIONS = {
     "-o",
     "--output",
     "--stats",
 }
-
-
-class GeneratorError(Exception):
-    """A user-facing generator error."""
 
 
 def parse_args() -> argparse.Namespace:
@@ -142,13 +137,6 @@ def resolve_install_root(value: str) -> Path:
     if not (root / "bin" / "runcpu").is_file():
         raise GeneratorError(f"install root does not contain bin/runcpu: {root}")
     return root
-
-
-def resolve_cli_path(value: str) -> Path:
-    path = Path(value).expanduser()
-    if not path.is_absolute():
-        path = Path.cwd() / path
-    return path.resolve(strict=False)
 
 
 def root_relative(path: str | Path, root: Path) -> str:
@@ -443,16 +431,9 @@ def normalize_path(token: str, cwd: Path, root: Path) -> str:
 
 def render_command(argv: list[str], redirects: dict[str, str]) -> str:
     parts = list(argv)
-    if "stdin" in redirects:
-        parts.extend(["<", redirects["stdin"]])
-    if "stdout" in redirects:
-        parts.extend([">", redirects["stdout"]])
-    if "stdout-append" in redirects:
-        parts.extend([">>", redirects["stdout-append"]])
-    if "stderr" in redirects:
-        parts.extend(["2>", redirects["stderr"]])
-    if "stderr-append" in redirects:
-        parts.extend(["2>>", redirects["stderr-append"]])
+    for key in REDIRECT_ORDER:
+        if key in redirects:
+            parts.extend([REDIRECT_SHELL_OPS[key], redirects[key]])
     return " ".join(parts)
 
 
@@ -494,19 +475,12 @@ def write_manifest(args: argparse.Namespace, root: Path, logs: dict[str, Path]) 
 
 
 def main() -> int:
-    try:
-        args = parse_args()
-        root = resolve_install_root(args.install_root)
-        logs = generate_logs(args, root)
-        write_manifest(args, root, logs)
-        return 0
-    except GeneratorError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
-    except KeyboardInterrupt:
-        print("interrupted", file=sys.stderr)
-        return 130
+    args = parse_args()
+    root = resolve_install_root(args.install_root)
+    logs = generate_logs(args, root)
+    write_manifest(args, root, logs)
+    return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run_cli(main))
