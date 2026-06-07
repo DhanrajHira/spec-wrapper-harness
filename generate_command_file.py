@@ -264,18 +264,21 @@ def generate_logs(args: argparse.Namespace, root: Path) -> dict[str, Path]:
     return logs
 
 
-def parse_fake_log(log_path: Path, suite: str, root: Path) -> list[dict[str, Any]]:
+def parse_fake_log(
+    log_path: Path, suite: str, root: Path
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     try:
         lines = log_path.read_text().splitlines()
     except OSError as exc:
         raise GeneratorError(f"failed to read fake log {log_path}: {exc}") from exc
 
     commands: list[dict[str, Any]] = []
+    verify_commands: list[dict[str, Any]] = []
     in_running_phase = False
-    in_benchmark_run = False
+    active_phase: str | None = None
     current_benchmark: str | None = None
     current_cwd: str | None = None
-    command_indexes: dict[str, int] = {}
+    command_indexes: dict[tuple[str, str], int] = {}
 
     for line in lines:
         if line == "Running Benchmarks":
@@ -291,14 +294,22 @@ def parse_fake_log(log_path: Path, suite: str, root: Path) -> list[dict[str, Any
             continue
 
         if line.startswith("%% Fake commands from benchmark_run"):
-            in_benchmark_run = True
+            active_phase = "benchmark"
             current_cwd = None
             continue
         if line.startswith("%% End of fake output from benchmark_run"):
-            in_benchmark_run = False
+            active_phase = None
             current_cwd = None
             continue
-        if not in_benchmark_run or current_benchmark is None:
+        if line.startswith("%% Fake commands from compare_run"):
+            active_phase = "verify"
+            current_cwd = None
+            continue
+        if line.startswith("%% End of fake output from compare_run"):
+            active_phase = None
+            current_cwd = None
+            continue
+        if active_phase is None or current_benchmark is None:
             continue
 
         stripped = line.strip()
@@ -321,14 +332,15 @@ def parse_fake_log(log_path: Path, suite: str, root: Path) -> list[dict[str, Any
         if current_cwd is None:
             continue
 
-        command_indexes[current_benchmark] = (
-            command_indexes.get(current_benchmark, 0) + 1
-        )
-        commands.append(
+        index_key = (active_phase, current_benchmark)
+        command_indexes[index_key] = command_indexes.get(index_key, 0) + 1
+        target = commands if active_phase == "benchmark" else verify_commands
+        target.append(
             build_entry(
                 suite=suite,
                 benchmark=current_benchmark,
-                command_index=command_indexes[current_benchmark],
+                phase=active_phase,
+                command_index=command_indexes[index_key],
                 cwd=current_cwd,
                 raw_command=stripped,
                 root=root,
@@ -336,12 +348,13 @@ def parse_fake_log(log_path: Path, suite: str, root: Path) -> list[dict[str, Any
         )
         current_cwd = None
 
-    return commands
+    return commands, verify_commands
 
 
 def build_entry(
     suite: str,
     benchmark: str,
+    phase: str,
     command_index: int,
     cwd: str,
     raw_command: str,
@@ -361,7 +374,7 @@ def build_entry(
     return {
         "suite": suite,
         "benchmark": benchmark,
-        "phase": "benchmark",
+        "phase": phase,
         "command_index": command_index,
         "cwd": root_relative(cwd_path, root),
         "command": normalized_command,
@@ -445,11 +458,14 @@ def render_command(argv: list[str], redirects: dict[str, str]) -> str:
 
 def write_manifest(args: argparse.Namespace, root: Path, logs: dict[str, Path]) -> None:
     commands: list[dict[str, Any]] = []
+    verify_commands: list[dict[str, Any]] = []
     for suite in args.suite:
         log_path = logs.get(suite)
         if log_path is None:
             continue
-        commands.extend(parse_fake_log(log_path, suite, root))
+        suite_commands, suite_verify_commands = parse_fake_log(log_path, suite, root)
+        commands.extend(suite_commands)
+        verify_commands.extend(suite_verify_commands)
 
     if not commands:
         raise GeneratorError("no benchmark commands were captured")
@@ -464,12 +480,17 @@ def write_manifest(args: argparse.Namespace, root: Path, logs: dict[str, Path]) 
             if suite in logs
         ],
         "commands": commands,
+        "verify_commands": verify_commands,
     }
 
     output = resolve_cli_path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(manifest, indent=2) + "\n")
-    print(f"wrote {output} ({len(commands)} commands)", file=sys.stderr)
+    print(
+        f"wrote {output} ({len(commands)} commands, "
+        f"{len(verify_commands)} verify commands)",
+        file=sys.stderr,
+    )
 
 
 def main() -> int:

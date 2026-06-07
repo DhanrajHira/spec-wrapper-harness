@@ -257,9 +257,7 @@ def filter_commands(
 ) -> list[dict[str, Any]]:
     suites = set(args.suite or [])
     benchmark_filters = [value.casefold() for value in args.benchmark or []]
-    skip_benchmark_filters = [
-        value.casefold() for value in args.skip_benchmark or []
-    ]
+    skip_benchmark_filters = [value.casefold() for value in args.skip_benchmark or []]
     filtered = []
 
     for command in commands:

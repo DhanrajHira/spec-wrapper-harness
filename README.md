@@ -191,6 +191,23 @@ By default, commands for the same `(suite, benchmark)` pair are not grouped. Wit
 
 The runner does not run `setup_required` commands. Run those first if the run directories have not already been materialized.
 
+## Verifying Outputs
+
+`verify_runs.py` compares generated benchmark outputs without rebuilding or rerunning benchmarks. It reads the manifest, finds each unique run directory, and runs that directory's `compare.cmd` through `specinvoke`:
+
+```bash
+./verify_runs.py \
+  --install-root ../ \
+  --commands-file commands.static.full.json
+```
+
+`specinvoke` must already be available in `PATH`, for example from an initialized SPEC environment. The script supports the same benchmark include/exclude filters as `run_spec_with_wrapper.py`:
+
+```bash
+./verify_runs.py --benchmark x264
+./verify_runs.py --skip-benchmark nab
+```
+
 ## Generating Commands
 
 `generate_command_file.py` regenerates the concrete command manifest for a specific SPEC config. It runs the selected suites through SPEC clobber, build, setup, and fake run phases, parses the fake benchmark invocations, and writes the same JSON schema consumed by `run_spec_with_wrapper.py`.
