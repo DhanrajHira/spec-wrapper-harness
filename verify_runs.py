@@ -77,16 +77,35 @@ def entry_label(entry: dict[str, Any]) -> str:
     )
 
 
+def benchmark_name(entry: dict[str, Any]) -> str:
+    benchmark = str(entry.get("benchmark", "")).strip()
+    return benchmark or entry_label(entry)
+
+
+def command_number(entry: dict[str, Any]) -> str:
+    return str(entry.get("command_index", "")).strip() or "unknown"
+
+
+def print_summary(total: int, failures: int, failed_commands: list[str]) -> None:
+    print(f"compare summary: total={total} failed={failures}", flush=True)
+    for failed_command in failed_commands:
+        print(f"failed benchmark: {failed_command}", flush=True)
+
+
 def run_directories(
     commands: list[dict[str, Any]], install_root: Path
-) -> OrderedDict[Path, str]:
-    directories: OrderedDict[Path, str] = OrderedDict()
+) -> OrderedDict[Path, tuple[str, str, str]]:
+    directories: OrderedDict[Path, tuple[str, str, str]] = OrderedDict()
     for command in commands:
         cwd = command.get("cwd")
         if not isinstance(cwd, str):
             raise VerifyError("each command must contain a cwd string")
-        label = f"{command.get('suite', '')} {command.get('benchmark', '')}"
-        directories.setdefault(Path(resolve_install_path(cwd, install_root)), label)
+        benchmark = benchmark_name(command)
+        label = f"{command.get('suite', '')} {benchmark}"
+        directories.setdefault(
+            Path(resolve_install_path(cwd, install_root)),
+            (label, benchmark, command_number(command)),
+        )
     return directories
 
 
@@ -105,11 +124,16 @@ def specinvoke_command(run_dir: Path) -> list[str]:
     ]
 
 
-def verify_run_dirs(run_dirs: OrderedDict[Path, str], dry_run: bool) -> int:
+def verify_run_dirs(
+    run_dirs: OrderedDict[Path, tuple[str, str, str]], dry_run: bool
+) -> int:
     failures = 0
+    failed_commands: list[str] = []
     total = len(run_dirs)
 
-    for index, (run_dir, label) in enumerate(run_dirs.items(), start=1):
+    for index, (run_dir, (label, benchmark, command_index)) in enumerate(
+        run_dirs.items(), start=1
+    ):
         command = specinvoke_command(run_dir)
         print(f"[{index}/{total}] compare: {label} ({run_dir})", flush=True)
 
@@ -119,6 +143,7 @@ def verify_run_dirs(run_dirs: OrderedDict[Path, str], dry_run: bool) -> int:
 
         if not (run_dir / "compare.cmd").is_file():
             failures += 1
+            failed_commands.append(f"{benchmark} command {command_index}")
             print(
                 f"compare failed [missing compare.cmd]: {label} ({run_dir})",
                 file=sys.stderr,
@@ -131,13 +156,14 @@ def verify_run_dirs(run_dirs: OrderedDict[Path, str], dry_run: bool) -> int:
             print(f"compare ok: {label}", flush=True)
         else:
             failures += 1
+            failed_commands.append(f"{benchmark} command {command_index}")
             print(
                 f"compare failed [{completed.returncode}]: {label} ({run_dir})",
                 file=sys.stderr,
                 flush=True,
             )
 
-    print(f"compare summary: total={total} failed={failures}", flush=True)
+    print_summary(total, failures, failed_commands)
     return 1 if failures else 0
 
 
@@ -145,6 +171,7 @@ def verify_entries(
     entries: list[dict[str, Any]], install_root: Path, dry_run: bool
 ) -> int:
     failures = 0
+    failed_commands: list[str] = []
     total = len(entries)
 
     for index, entry in enumerate(entries, start=1):
@@ -161,13 +188,16 @@ def verify_entries(
             print(f"compare ok: {label}", flush=True)
         else:
             failures += 1
+            failed_commands.append(
+                f"{benchmark_name(entry)} command {command_number(entry)}"
+            )
             print(
                 f"compare failed [{completed.returncode}]: {label}",
                 file=sys.stderr,
                 flush=True,
             )
 
-    print(f"compare summary: total={total} failed={failures}", flush=True)
+    print_summary(total, failures, failed_commands)
     return 1 if failures else 0
 
 
