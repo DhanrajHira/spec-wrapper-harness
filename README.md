@@ -189,6 +189,8 @@ Example:
 
 `--jobs N` runs rendered commands in parallel. The default is `--jobs 1`, so commands run in manifest order unless parallelism is requested. `--jobs -1` uses one worker per rendered command after filtering.
 
+The runner attempts every rendered command even if earlier commands fail. It exits with the first nonzero command status if any command failed.
+
 By default, commands for the same `(suite, benchmark)` pair are not grouped. With `--jobs > 1`, command indices from one benchmark may run concurrently. Use `--serialize-benchmark-commands` for conservative scheduling: each `(suite, benchmark)` pair becomes one work item, and its commands run sequentially in manifest order. With that flag, `--jobs -1` uses one worker per benchmark group.
 
 `--benchmark` filters use case-insensitive substring matching against the full benchmark name. For example, both `--benchmark x264` and `--benchmark 525` match `525.x264_r`. `--skip-benchmark` uses the same matching rules to exclude benchmarks after the include filter is applied.

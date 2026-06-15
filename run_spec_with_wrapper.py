@@ -127,11 +127,6 @@ def parse_args() -> argparse.Namespace:
         "--dry-run", action="store_true", help="print commands without running them"
     )
     parser.add_argument(
-        "--continue-on-error",
-        action="store_true",
-        help="continue scheduling after command failures",
-    )
-    parser.add_argument(
         "--verbose", action="store_true", help="print shell commands before execution"
     )
     parser.add_argument(
@@ -439,7 +434,6 @@ def group_commands(
 def run_rendered_commands(
     rendered_commands: list[RenderedCommand],
     jobs: int,
-    continue_on_error: bool,
     verbose: bool,
     serialize_benchmark_commands: bool,
 ) -> int:
@@ -451,12 +445,9 @@ def run_rendered_commands(
     max_workers = len(work_items) if jobs == -1 else min(jobs, len(work_items))
     queue_lock = threading.Lock()
     print_lock = threading.Lock()
-    stop_event = threading.Event()
 
     def next_group() -> list[RenderedCommand] | None:
         with queue_lock:
-            if stop_event.is_set() and not continue_on_error:
-                return None
             if not work_items:
                 return None
             return work_items.popleft()
@@ -469,9 +460,6 @@ def run_rendered_commands(
                 return failures
 
             for command in group:
-                if stop_event.is_set() and not continue_on_error:
-                    break
-
                 with print_lock:
                     print(
                         f"[{command.manifest_index}/{command.total_commands}] {command.label}",
@@ -492,9 +480,6 @@ def run_rendered_commands(
                             file=sys.stderr,
                             flush=True,
                         )
-                    if not continue_on_error:
-                        stop_event.set()
-                        break
                 else:
                     with print_lock:
                         print(
@@ -542,7 +527,6 @@ def main() -> int:
     return run_rendered_commands(
         rendered_commands,
         jobs=args.jobs,
-        continue_on_error=args.continue_on_error,
         verbose=args.verbose,
         serialize_benchmark_commands=args.serialize_benchmark_commands,
     )
