@@ -99,7 +99,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--install-root", required=True, help="SPEC install root")
     parser.add_argument(
         "--commands-file",
-        help="captured commands JSON; defaults to spec_integer_run_commands.json next to this script",
+        help="captured commands JSON; defaults to commands.json next to this script",
     )
     parser.add_argument(
         "--jobs",
@@ -221,9 +221,7 @@ def validate_wrapper(wrapper: list[str], custom_placeholders: set[str]) -> None:
 def resolve_commands_file(commands_file: str | None) -> Path:
     if commands_file:
         return Path(commands_file).expanduser().resolve(strict=False)
-    return (
-        Path(__file__).with_name("spec_integer_run_commands.json").resolve(strict=False)
-    )
+    return Path(__file__).with_name("commands.json").resolve(strict=False)
 
 
 def redirect_placeholder_values(redirects: dict[str, str]) -> dict[str, str | None]:

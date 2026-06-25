@@ -71,7 +71,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output",
-        default="spec_run_commands.json",
+        default="commands.json",
         help="output JSON path",
     )
     parser.add_argument(
@@ -254,14 +254,21 @@ def generate_logs(args: argparse.Namespace, root: Path) -> dict[str, Path]:
 
 def parse_fake_log(
     log_path: Path, suite: str, root: Path
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     try:
         lines = log_path.read_text().splitlines()
     except OSError as exc:
         raise GeneratorError(f"failed to read fake log {log_path}: {exc}") from exc
 
     commands: list[dict[str, Any]] = []
+    pre_compare_commands: list[dict[str, Any]] = []
     verify_commands: list[dict[str, Any]] = []
+    # Phase name (set by the %% markers) -> the list its commands accumulate into.
+    targets = {
+        "benchmark": commands,
+        "pre_compare": pre_compare_commands,
+        "verify": verify_commands,
+    }
     in_running_phase = False
     active_phase: str | None = None
     current_benchmark: str | None = None
@@ -286,6 +293,14 @@ def parse_fake_log(
             current_cwd = None
             continue
         if line.startswith("%% End of fake output from benchmark_run"):
+            active_phase = None
+            current_cwd = None
+            continue
+        if line.startswith("%% Fake commands from pre-compare_run"):
+            active_phase = "pre_compare"
+            current_cwd = None
+            continue
+        if line.startswith("%% End of fake output from pre-compare_run"):
             active_phase = None
             current_cwd = None
             continue
@@ -322,8 +337,7 @@ def parse_fake_log(
 
         index_key = (active_phase, current_benchmark)
         command_indexes[index_key] = command_indexes.get(index_key, 0) + 1
-        target = commands if active_phase == "benchmark" else verify_commands
-        target.append(
+        targets[active_phase].append(
             build_entry(
                 suite=suite,
                 benchmark=current_benchmark,
@@ -336,7 +350,7 @@ def parse_fake_log(
         )
         current_cwd = None
 
-    return commands, verify_commands
+    return commands, pre_compare_commands, verify_commands
 
 
 def build_entry(
@@ -439,13 +453,17 @@ def render_command(argv: list[str], redirects: dict[str, str]) -> str:
 
 def write_manifest(args: argparse.Namespace, root: Path, logs: dict[str, Path]) -> None:
     commands: list[dict[str, Any]] = []
+    pre_compare_commands: list[dict[str, Any]] = []
     verify_commands: list[dict[str, Any]] = []
     for suite in args.suite:
         log_path = logs.get(suite)
         if log_path is None:
             continue
-        suite_commands, suite_verify_commands = parse_fake_log(log_path, suite, root)
+        suite_commands, suite_pre_compare_commands, suite_verify_commands = (
+            parse_fake_log(log_path, suite, root)
+        )
         commands.extend(suite_commands)
+        pre_compare_commands.extend(suite_pre_compare_commands)
         verify_commands.extend(suite_verify_commands)
 
     if not commands:
@@ -461,6 +479,7 @@ def write_manifest(args: argparse.Namespace, root: Path, logs: dict[str, Path]) 
             if suite in logs
         ],
         "commands": commands,
+        "pre_compare_commands": pre_compare_commands,
         "verify_commands": verify_commands,
     }
 
@@ -469,6 +488,7 @@ def write_manifest(args: argparse.Namespace, root: Path, logs: dict[str, Path]) 
     output.write_text(json.dumps(manifest, indent=2) + "\n")
     print(
         f"wrote {output} ({len(commands)} commands, "
+        f"{len(pre_compare_commands)} pre-compare commands, "
         f"{len(verify_commands)} verify commands)",
         file=sys.stderr,
     )

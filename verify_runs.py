@@ -36,7 +36,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--commands-file",
-        default=str(Path(__file__).with_name("commands.static.full.json")),
+        default=str(Path(__file__).with_name("commands.json")),
         help="captured commands JSON",
     )
     parser.add_argument(
@@ -60,8 +60,10 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def build_shell_command(entry: dict[str, Any], install_root: Path) -> str:
-    resolved = resolve_command(entry, install_root, "verify command")
+def build_shell_command(
+    entry: dict[str, Any], install_root: Path, context: str = "verify command"
+) -> str:
+    resolved = resolve_command(entry, install_root, context)
     command = " ".join(
         part
         for part in (quote_argv(resolved.argv), render_redirects(resolved.redirects))
@@ -70,10 +72,10 @@ def build_shell_command(entry: dict[str, Any], install_root: Path) -> str:
     return f"( cd {shlex.quote(resolved.cwd)} && {command} )"
 
 
-def entry_label(entry: dict[str, Any]) -> str:
+def entry_label(entry: dict[str, Any], phase_word: str = "verify") -> str:
     return (
         f"{entry.get('suite', '')} {entry.get('benchmark', '')} "
-        f"verify command {entry.get('command_index', '')}"
+        f"{phase_word} command {entry.get('command_index', '')}"
     )
 
 
@@ -109,19 +111,44 @@ def run_directories(
     return directories
 
 
-def specinvoke_command(run_dir: Path) -> list[str]:
+def specinvoke_command(
+    run_dir: Path,
+    cmd_file: str = "compare.cmd",
+    err: str = "compare.err",
+    out: str = "compare.stdout",
+) -> list[str]:
     return [
         "specinvoke",
         "-d",
         str(run_dir),
         "-f",
-        "compare.cmd",
+        cmd_file,
         "-E",
         "-e",
-        "compare.err",
+        err,
         "-o",
-        "compare.stdout",
+        out,
     ]
+
+
+def run_pre_compare_cmd(run_dir: Path, dry_run: bool) -> None:
+    """Run a run directory's pre-compare.cmd (output post-processing) if present.
+
+    Benchmarks such as vpr, gem5, marian, and several SPECspeed benchmarks emit a
+    raw result that a post-processing step converts into the file the compare step
+    reads. SPEC runs pre-compare.cmd before compare.cmd; replaying outputs without
+    it leaves the comparable file missing.
+    """
+    if not (run_dir / "pre-compare.cmd").is_file():
+        return
+    command = specinvoke_command(
+        run_dir, "pre-compare.cmd", "pre-compare.err", "pre-compare.stdout"
+    )
+    if dry_run:
+        print(" ".join(command))
+        return
+    # specinvoke opens -f relative to the current directory, so run it in run_dir.
+    subprocess.run(command, cwd=run_dir)
 
 
 def verify_run_dirs(
@@ -138,6 +165,7 @@ def verify_run_dirs(
         print(f"[{index}/{total}] compare: {label} ({run_dir})", flush=True)
 
         if dry_run:
+            run_pre_compare_cmd(run_dir, dry_run)
             print(" ".join(command))
             continue
 
@@ -151,7 +179,8 @@ def verify_run_dirs(
             )
             continue
 
-        completed = subprocess.run(command)
+        run_pre_compare_cmd(run_dir, dry_run)
+        completed = subprocess.run(command, cwd=run_dir)
         if completed.returncode == 0:
             print(f"compare ok: {label}", flush=True)
         else:
@@ -167,17 +196,22 @@ def verify_run_dirs(
     return 1 if failures else 0
 
 
-def verify_entries(
-    entries: list[dict[str, Any]], install_root: Path, dry_run: bool
-) -> int:
+def run_shell_entries(
+    entries: list[dict[str, Any]],
+    install_root: Path,
+    dry_run: bool,
+    phase_word: str,
+    context: str,
+) -> tuple[int, list[str]]:
+    """Run each entry as ( cd cwd && cmd ); return (failures, failed labels)."""
     failures = 0
     failed_commands: list[str] = []
     total = len(entries)
 
     for index, entry in enumerate(entries, start=1):
-        label = entry_label(entry)
-        shell_command = build_shell_command(entry, install_root)
-        print(f"[{index}/{total}] compare: {label}", flush=True)
+        label = entry_label(entry, phase_word)
+        shell_command = build_shell_command(entry, install_root, context)
+        print(f"[{index}/{total}] {phase_word}: {label}", flush=True)
 
         if dry_run:
             print(shell_command)
@@ -185,20 +219,43 @@ def verify_entries(
 
         completed = subprocess.run(shell_command, shell=True)
         if completed.returncode == 0:
-            print(f"compare ok: {label}", flush=True)
+            print(f"{phase_word} ok: {label}", flush=True)
         else:
             failures += 1
             failed_commands.append(
                 f"{benchmark_name(entry)} command {command_number(entry)}"
             )
             print(
-                f"compare failed [{completed.returncode}]: {label}",
+                f"{phase_word} failed [{completed.returncode}]: {label}",
                 file=sys.stderr,
                 flush=True,
             )
 
-    print_summary(total, failures, failed_commands)
-    return 1 if failures else 0
+    return failures, failed_commands
+
+
+def verify_entries(
+    entries: list[dict[str, Any]],
+    install_root: Path,
+    dry_run: bool,
+    pre_compare_entries: list[dict[str, Any]] | None = None,
+) -> int:
+    # Post-processing must run before the compares that read its output.
+    pre_failures = 0
+    if pre_compare_entries:
+        pre_failures, _ = run_shell_entries(
+            pre_compare_entries,
+            install_root,
+            dry_run,
+            "pre-compare",
+            "pre-compare command",
+        )
+
+    failures, failed_commands = run_shell_entries(
+        entries, install_root, dry_run, "verify", "verify command"
+    )
+    print_summary(len(entries), failures, failed_commands)
+    return 1 if (failures or pre_failures) else 0
 
 
 def main() -> int:
@@ -215,9 +272,22 @@ def main() -> int:
             exclude=args.skip_benchmark,
         )
 
+    def selected_optional(entries: Any) -> list[dict[str, Any]]:
+        # Most benchmarks have no pre-compare phase, and filters may exclude the
+        # ones that do; treat "nothing matched" as empty rather than an error.
+        if not isinstance(entries, list) or not entries:
+            return []
+        try:
+            return selected(entries)
+        except VerifyError:
+            return []
+
     verify_commands = manifest.get("verify_commands")
     if isinstance(verify_commands, list) and verify_commands:
-        return verify_entries(selected(verify_commands), install_root, args.dry_run)
+        pre_compare_entries = selected_optional(manifest.get("pre_compare_commands"))
+        return verify_entries(
+            selected(verify_commands), install_root, args.dry_run, pre_compare_entries
+        )
 
     commands = selected(manifest["commands"])
     return verify_run_dirs(run_directories(commands, install_root), args.dry_run)
